@@ -414,12 +414,19 @@ movies_with_tags.head()
 
 """## Persiapan Data untuk Pemodelan"""
 
-# Membuat kolom baru 'combined_features' yang menggabungkan genre dan tag
-# Ini akan digunakan sebagai dasar untuk content based filtering
+# Menggabungkan semua tag untuk setiap movieId
+tags_combined = tags.groupby('movieId')['tag'].apply(lambda x: '|'.join(x)).reset_index()
+
+# Menggabungkan tags_combined dengan dataframe movies
+movies_with_tags = pd.merge(movies, tags_combined, on='movieId', how='left')
+
+# Ganti nilai NaN dengan string kosong pada kolom 'tag'
+movies_with_tags['tag'].fillna('', inplace=True)
+
+# Membuat kolom 'combined_features' yang menggabungkan genre dan tag
 movies_with_tags['combined_features'] = movies_with_tags['genres'] + '|' + movies_with_tags['tag']
 
-# Menampilkan kolom baru untuk memastikan penggabungan berjalan dengan benar
-movies_with_tags[['title', 'combined_features']].head()
+movies_with_tags.head()
 
 """Sekarang dataset siap untuk digunakan dalam pembuatan model rekomendasi berbasis konten, kolom 'combined_features' akan menjadi kunci untuk menghitung kesamaan antar film
 
@@ -439,8 +446,10 @@ Untuk mengembangkan model sistem rekomendasi berbasis konten, langkah pertama ad
 Kita akan menggunakan TF-IDF Vectorizer untuk tujuan ini.
 """
 
-from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.feature_extraction.text import TfidfVectorizer
+from collections import Counter
+import numpy as np
 
 # Menggunakan TF-IDF Vectorizer untuk mengonversi teks kombinasi genre dan tag menjadi matriks fitur
 tfidf_vectorizer = TfidfVectorizer(stop_words='english')
@@ -458,7 +467,7 @@ print(cosine_sim)
 
 """## Fungsi Model Content Based Filtering
 
-Mengembangkan fungsi yang menerima judul film sebagai input dan mengembalikan rekomendasi film serupa.
+Membuat fungsi yang menerima judul film sebagai input dan mengembalikan rekomendasi film serupa.
 """
 
 from IPython.display import display, Markdown
@@ -495,6 +504,35 @@ def create_recommendation_table(random_movie_title, movies_with_tags, cosine_sim
 
     return recommendation_table
 
+"""Membuat fungsi untuk menghitung precision."""
+
+def calculate_precision_for_movie(random_movie_title, top_n_recommendations=10):
+    # Mendapatkan indeks film yang sesuai dengan movieId
+    idx = movies_with_tags.index[movies_with_tags['title'] == random_movie_title].tolist()[0]
+
+
+    # Mendapatkan skor kesamaan untuk semua film dengan film input
+    sim_scores = list(enumerate(cosine_sim[idx]))
+
+    # Mengurutkan film berdasarkan skor kesamaan
+    sim_scores = sorted(sim_scores, key=lambda x: x[1], reverse=True)
+
+    # Mendapatkan skor untuk top_n_recommendations film teratas (mengabaikan diri sendiri)
+    sim_scores = sim_scores[1:top_n_recommendations + 1]
+
+    # Mendapatkan indeks film
+    movie_indices = [i[0] for i in sim_scores]
+
+    # Menghitung relevansi berdasarkan genre yang sama
+    target_movie_genres = set(movies_with_tags.loc[movies_with_tags['title'] == random_movie_title, 'genres'].iloc[0].split('|'))
+    recommended_movies_genres = movies_with_tags.loc[movie_indices, 'genres'].apply(lambda x: set(x.split('|')))
+    relevancy_count = recommended_movies_genres.apply(lambda x: len(target_movie_genres.intersection(x)) > 0).sum()
+
+    # Menghitung precision
+    precision = relevancy_count / top_n_recommendations
+
+    return precision
+
 """## Mendapatkan Rekomendasi
 
 Menjalankan fungsi yang menerima judul film acak sebagai input dan mengembalikan rekomendasi film serupa.
@@ -523,9 +561,15 @@ display(Markdown(f"- **Judul film**: {random_movie_title}"))
 result_columns = ['title', 'year', 'genres', 'tag', 'similarity_score']
 recommendation_result = recommendation_table[result_columns]
 
+# Menghitung precision
+precision_recommendation_result = calculate_precision_for_movie(random_movie_title)
+
 # Tampilkan tabel hasil rekomendasi
 display(Markdown("### Tabel hasil rekomendasi:"))
 display(recommendation_result)
+
+# Menampilkan precision
+display(Markdown(f"### Nilai precision: {precision_recommendation_result}"))
 
 """# Mengembangkan Model Collaborative Filtering
 
